@@ -93,24 +93,6 @@ bumps/
   title from the filename. Name episodes like `Show - S01E01 - Title.mkv`
   (Jellyfin style; `Show.S01E01.Title.avi` also works).
 
-## Sample videos
-
-For testing there are 24 labeled color clips, all tagged `[SAMPLE]`:
-- **Shows:** each show has its own pastel color family, with a different shade
-  per episode, so two of the same color family in a row would mean a bug.
-  - Futurama: mint green
-  - The Boondocks: butter yellow
-  - Bleach: peach
-  - Family Guy: sky blue
-  - Aqua Teen Hunger Force: teal
-  - Cowboy Bebop: coral red
-- **Bumps:** 12 bumps, each a unique soft purple. Purple only ever means bump.
-
-```sh
-docker compose run --rm samples            # (re)create any missing samples
-docker compose run --rm samples --clean    # delete every [SAMPLE] file once your real stuff is in
-```
-
 ## How it works
 
 - `app/tv.py` is one Python process (stdlib only) inside the container:
@@ -124,8 +106,8 @@ docker compose run --rm samples --clean    # delete every [SAMPLE] file once you
 - **Nothing to air:** if `shows/` and `bumps/` are both empty, it airs color bars.
 - **Unreadable files:** a file ffmpeg can't read is logged as `SKIP` and left
   out until the next restart.
-- **Settings:** bumps per break is `BUMPS_MIN` / `BUMPS_MAX` in `compose.yaml`.
-  Everything else is a named constant at the top of `app/tv.py`.
+- **Settings:** every setting, bumps per break included, is a named constant
+  at the top of `app/tv.py`.
 
 ## Troubleshooting
 

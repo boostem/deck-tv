@@ -19,8 +19,6 @@ How it hangs together:
 Stdlib only; ffmpeg and ffprobe come from Debian.
 """
 
-from __future__ import annotations
-
 import collections
 import itertools
 import json
@@ -34,6 +32,7 @@ import sys
 import threading
 import time
 import traceback
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
@@ -47,8 +46,7 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 PORT = 8000
 
 # --- programming --------------------------------------------------------------
-BUMPS_MIN = int(os.environ.get("BUMPS_MIN", "3"))
-BUMPS_MAX = int(os.environ.get("BUMPS_MAX", "5"))
+BUMPS_MIN, BUMPS_MAX = 3, 5  # bumps per break
 SETTLE_SECONDS = 30   # skip files modified this recently: probably still copying
 BREAK_MARGIN = 180    # mid-episode breaks: none within 3 min of either end or of each other
 HISTORY_MAX = 100
@@ -137,14 +135,8 @@ class State:
                 old = json.load(fh)
         except (OSError, ValueError):
             old = {}
-        self.data = {
-            "version": 1,
-            "last_show": old.get("last_show"),
-            "played": old.get("played", {}),
-            "bumps_played": old.get("bumps_played", []),
-            "history": old.get("history", []),
-            "bumps_only": old.get("bumps_only", False),
-        }
+        self.data = {"last_show": None, "played": {}, "bumps_played": [], "history": [],
+                     "bumps_only": False, **old}
 
     def save(self) -> None:
         """Atomic rewrite. The caller holds self.lock."""
@@ -154,19 +146,20 @@ class State:
         os.replace(tmp, self.path)
 
 
+@dataclass
 class Item:
-    def __init__(self, kind: str, path: str | None = None, show: str | None = None,
-                 rel: str | None = None, start: float | None = None, end: float | None = None,
-                 part: int = 1, parts: int = 1, surf: int = 0):
-        self.kind = kind  # "bump", "episode" or "bars"
-        self.path = path  # absolute, inside the container
-        self.show = show
-        self.rel = rel    # relative to the show folder, or to bumps/
-        self.start, self.end = start, end  # seconds into the file; None = top / end
-        self.part, self.parts = part, parts
-        self.surf = surf  # the channel-surf request this item answers, or 0
-        self.burst = SURF_BURST  # seconds a surf puts on air at once (less for a short bump)
-        self.id = ""      # "<session>-<n>", set by the encoder; names its /hls dir
+    kind: str                   # "bump", "episode" or "bars"
+    path: str | None = None     # absolute, inside the container
+    show: str | None = None
+    rel: str | None = None      # relative to the show folder, or to bumps/
+    start: float | None = None  # seconds into the file; None = top / end
+    end: float | None = None
+    part: int = 1
+    parts: int = 1
+    surf: int = 0               # the channel-surf request this item answers, or 0
+    info: dict | None = None    # probe() output, if already probed
+    burst: float = SURF_BURST   # seconds a surf puts on air at once (less for a short bump)
+    id: str = ""                # "<session>-<n>", set by the encoder; names its /hls dir
 
     def __str__(self) -> str:
         if self.kind == "episode":
@@ -223,17 +216,22 @@ def pick_episode(state: State, shows: dict[str, list[str]]) -> tuple[str, str]:
     return show, ep
 
 
-def chapters(path: str) -> tuple[float, list[float]]:
-    """(duration, chapter start times) of a file; (0, []) if ffprobe can't tell."""
+def probe(path: str) -> dict:
+    """ffprobe's streams, chapters and duration of a file; {} if it can't read it."""
     try:
-        out = subprocess.run(["ffprobe", "-v", "error", "-of", "json", "-show_chapters",
-                              "-show_entries", "format=duration", path],
+        out = subprocess.run(["ffprobe", "-v", "error", "-of", "json", "-show_streams",
+                              "-show_chapters", "-show_entries", "format=duration", path],
                              capture_output=True, text=True, timeout=60)
-        info = json.loads(out.stdout)
-        return (float(info["format"]["duration"]),
-                sorted(float(c["start_time"]) for c in info.get("chapters", [])))
-    except (subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
-        return 0.0, []
+        return json.loads(out.stdout) if out.returncode == 0 else {}
+    except (subprocess.TimeoutExpired, ValueError):
+        return {}
+
+
+def duration(info: dict) -> float:
+    try:
+        return float(info["format"]["duration"])
+    except (KeyError, ValueError):
+        return 0.0
 
 
 def breaks(length: float, starts: list[float], begin: float = 0.0) -> list[float]:
@@ -262,7 +260,9 @@ def episode(state: State, bad: set[str], shows: dict[str, list[str]], bumps: lis
     while shows:
         show, rel = pick_episode(state, shows)
         path = os.path.join(SHOWS_DIR, show, rel)
-        length, starts = chapters(path)
+        info = probe(path)
+        length = duration(info)
+        starts = sorted(float(c["start_time"]) for c in info.get("chapters", []))
         begin = random.uniform(length * 0.10, length * 0.50) if surf and length else None
         edges = [begin, *(breaks(length, starts, begin or 0.0) if bumps else []), None]
         parts = len(edges) - 1
@@ -272,7 +272,7 @@ def episode(state: State, bad: set[str], shows: dict[str, list[str]], bumps: lis
                     yield Item("bump", os.path.join(BUMPS_DIR, b), rel=b)
             failed = yield Item("episode", path, show=show, rel=rel, start=edges[i],
                                 end=edges[i + 1], part=i + 1, parts=parts,
-                                surf=surf if i == 0 else 0)
+                                surf=surf if i == 0 else 0, info=info)
             if failed:
                 break
         if not (failed and i == 0):  # it aired, at least in part
@@ -283,7 +283,8 @@ def episode(state: State, bad: set[str], shows: dict[str, list[str]], bumps: lis
 def bump_item(rel: str, surf: int = 0) -> Item:
     item = Item("bump", os.path.join(BUMPS_DIR, rel), rel=rel, surf=surf)
     if surf:  # a surf lands on this bump: burst no more of it than it has
-        item.burst = min(SURF_BURST, max(0.0, chapters(item.path)[0] - SEGMENT))
+        item.info = probe(item.path)
+        item.burst = min(SURF_BURST, max(0.0, duration(item.info) - SEGMENT))
     return item
 
 
@@ -313,15 +314,6 @@ def programme(state: State, bad: set[str], surf: int = 0):
 
 
 # --- encoding ---------------------------------------------------------------------
-def probe(path: str) -> dict | None:
-    try:
-        out = subprocess.run(["ffprobe", "-v", "error", "-of", "json", "-show_streams", path],
-                             capture_output=True, text=True, timeout=60)
-        return json.loads(out.stdout) if out.returncode == 0 else None
-    except (subprocess.TimeoutExpired, ValueError):
-        return None
-
-
 def pick_audio(streams: list[dict]) -> int | None:
     """Index among the audio streams: the main English track, never commentary."""
     audio = [{k.lower(): v for k, v in s.get("tags", {}).items()}
@@ -365,7 +357,7 @@ def ffmpeg_cmd(item: Item, outdir: str) -> list[str] | None:
                 "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
                 "-map", "0:v", "-map", "1:a", "-t", "10", "-vf", "format=yuv420p"]
     else:
-        streams = (probe(item.path) or {}).get("streams", [])
+        streams = (item.info or probe(item.path)).get("streams", [])
         video = next((s for s in streams if s.get("codec_type") == "video"
                       and not s.get("disposition", {}).get("attached_pic")), None)
         if video is None:
@@ -398,16 +390,21 @@ def ffmpeg_cmd(item: Item, outdir: str) -> list[str] | None:
     return cmd
 
 
+@dataclass(slots=True)
 class Segment:
-    __slots__ = ("item", "name", "dur", "offset", "first", "ready_at", "seq", "cc", "start", "pdt")
+    item: Item
+    name: str
+    dur: float
+    offset: float       # seconds of this item before this segment
+    ready_at: float = field(default_factory=time.time)
+    seq: int = 0
+    cc: int = 0
+    start: float = 0.0  # wall-clock time it went on air
+    pdt: float = 0.0    # its PROGRAM-DATE-TIME: start, but never running backwards
 
-    def __init__(self, item: Item, name: str, dur: float, offset: float):
-        self.item, self.name, self.dur, self.offset = item, name, dur, offset
-        self.first = offset == 0  # offset: seconds of this item before this segment
-        self.ready_at = time.time()
-        self.seq = self.cc = 0
-        self.start = 0.0  # wall-clock time it went on air
-        self.pdt = 0.0    # its PROGRAM-DATE-TIME: start, but never running backwards
+    @property
+    def first(self) -> bool:
+        return self.offset == 0
 
     @property
     def path(self) -> str:
@@ -617,9 +614,6 @@ def make_handler(ch: Channel):
         def log_message(self, *args) -> None:
             pass  # every viewer asks for something every 2 s; the log is for ON AIR lines
 
-        def do_HEAD(self) -> None:
-            self.do_GET(head=True)
-
         def do_POST(self) -> None:
             raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             path = urlsplit(self.path).path
@@ -642,45 +636,45 @@ def make_handler(ch: Channel):
             info["bumps_only"] = ch.state.data["bumps_only"]
             self.send(200, json.dumps(info).encode(), "application/json", "no-store")
 
-        def do_GET(self, head: bool = False) -> None:
+        def do_GET(self) -> None:
             path = urlsplit(self.path).path
             if path in ("/", "/index.html"):
-                return self.send_file("index.html", "text/html; charset=utf-8", "no-cache", head)
+                return self.send_file("index.html", "text/html; charset=utf-8", "no-cache")
             if path == "/hls.min.js":
-                return self.send_file("hls.min.js", "text/javascript", "max-age=86400", head)
+                return self.send_file("hls.min.js", "text/javascript", "max-age=86400")
             if path == "/live.m3u8":
                 with ch.lock:
                     body = ch.playlist if len(ch.window) >= 3 else None
                 if body is None:
-                    return self.send(503, b"warming up\n", "text/plain", "no-store", head,
-                                     {"Retry-After": "2"})
-                return self.send(200, body, "application/vnd.apple.mpegurl", "no-cache, no-store", head)
+                    return self.send(503, b"warming up\n", "text/plain", "no-store",
+                             {"Retry-After": "2"})
+                return self.send(200, body, "application/vnd.apple.mpegurl", "no-cache, no-store")
             m = SEG_PATH.fullmatch(path)
             if m:
                 try:
                     with open(os.path.join(HLS_DIR, m[1], m[2]), "rb") as fh:
                         body = fh.read()
                 except OSError:
-                    return self.send(404, b"gone\n", "text/plain", "no-store", head)
-                return self.send(200, body, "video/mp2t", "max-age=300", head)
+                    return self.send(404, b"gone\n", "text/plain", "no-store")
+                return self.send(200, body, "video/mp2t", "max-age=300")
             if path == "/api/mode":
                 body = json.dumps({"bumps_only": ch.state.data["bumps_only"]}).encode()
-                return self.send(200, body, "application/json", "no-store", head)
+                return self.send(200, body, "application/json", "no-store")
             if path == "/healthz":
                 ok = time.time() - ch.last_publish < 10
                 return self.send(200 if ok else 503, b"on air\n" if ok else b"off air\n",
-                                 "text/plain", "no-store", head)
-            self.send(404, b"not found\n", "text/plain", "no-store", head)
+                                 "text/plain", "no-store")
+            self.send(404, b"not found\n", "text/plain", "no-store")
 
-        def send_file(self, name: str, ctype: str, cache: str, head: bool) -> None:
+        def send_file(self, name: str, ctype: str, cache: str) -> None:
             try:
                 with open(os.path.join(WEB_DIR, name), "rb") as fh:
                     body = fh.read()
             except OSError:
-                return self.send(404, b"not found\n", "text/plain", "no-store", head)
-            self.send(200, body, ctype, cache, head)
+                return self.send(404, b"not found\n", "text/plain", "no-store")
+            self.send(200, body, ctype, cache)
 
-        def send(self, code: int, body: bytes, ctype: str, cache: str, head: bool = False,
+        def send(self, code: int, body: bytes, ctype: str, cache: str,
                  extra: dict[str, str] | None = None) -> None:
             self.send_response(code)
             self.send_header("Content-Type", ctype)
@@ -690,8 +684,7 @@ def make_handler(ch: Channel):
             for key, value in (extra or {}).items():
                 self.send_header(key, value)
             self.end_headers()
-            if not head:
-                self.wfile.write(body)
+            self.wfile.write(body)
 
     return Handler
 
@@ -718,8 +711,6 @@ def run_thread(target, *args) -> None:
 
 
 def main() -> None:
-    if not 1 <= BUMPS_MIN <= BUMPS_MAX:
-        sys.exit(f"need 1 <= BUMPS_MIN <= BUMPS_MAX, got {BUMPS_MIN} and {BUMPS_MAX}")
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))  # PID 1 ignores SIGTERM unless handled
     os.makedirs(HLS_DIR, exist_ok=True)
     for name in os.listdir(HLS_DIR):  # leftovers if the process restarted in place

@@ -20,7 +20,7 @@
   html, body { margin: 0; height: 100%; overflow: hidden; }
   body {
     display: flex; align-items: center; justify-content: center;
-    min-height: 100vh; min-height: 100dvh;
+    min-height: 100dvh;
     /* A dark living room: faint glow on the wall, a floor line under the set. */
     background:
       radial-gradient(ellipse 70% 55% at 50% 40%, #202025 0%, transparent 70%),
@@ -33,12 +33,9 @@
 
   /* ---- the set: fits the viewport; everything inside is sized off its width --- */
   #set {
-    width: min(98vw, calc(97vh / 0.965));
+    width: min(98vw, calc(97dvh / 0.965));
     container-type: inline-size;
     display: flex; flex-direction: column;
-  }
-  @supports (height: 100dvh) {
-    #set { width: min(98vw, calc(97dvh / 0.965)); }
   }
   .cabinet {
     padding: 3.2cqw 3.6cqw 0;
@@ -186,12 +183,12 @@
   .base {
     margin: 0 3cqw;
     min-height: max(10cqw, 56px);
-    display: flex; align-items: center; justify-content: center; gap: 2cqw;
+    display: flex; align-items: center; justify-content: center; gap: 4cqw;
+    padding: 1.2cqw 0 1.6cqw; box-sizing: border-box;
     border-radius: 0 0 1.6cqw 1.6cqw;
     background: linear-gradient(#0e0e10, #151518 30%, #0b0b0d);
     box-shadow: inset 0 0.5cqw 0.8cqw rgba(0, 0, 0, .7), 0 2cqw 3cqw rgba(0, 0, 0, .6);
   }
-  .base { gap: 4cqw; padding: 1.2cqw 0 1.6cqw; box-sizing: border-box; }
   .vents {
     width: 18cqw; height: max(14px, 3.2cqw); border-radius: 0.4cqw;
     background: repeating-linear-gradient(#050506 0 max(2px, 0.35cqw), transparent max(2px, 0.35cqw) max(4px, 0.8cqw));
@@ -283,7 +280,6 @@
   const muteLed = document.getElementById('mute-led');
 
   let hls = null;
-  let mode = null;              // 'native' | 'hlsjs'
   let rebuildTimer = 0;
   let netErrors = 0;
   let lastMediaError = 0;
@@ -324,19 +320,16 @@
   // user gesture yet, iOS Low Power Mode, etc). Only if even muted playback is
   // refused does the screen ask for a tap.
   function safePlay() {
-    const p = video.play();
-    if (p && typeof p.catch === 'function') {
-      p.catch(err => {
-        if (!err || err.name !== 'NotAllowedError') return;
-        if (!video.muted) {
-          video.muted = true;
-          render();
-          video.play().catch(() => { overlay.hidden = false; });
-        } else {
-          overlay.hidden = false;
-        }
-      });
-    }
+    video.play().catch(err => {
+      if (err.name !== 'NotAllowedError') return;
+      if (!video.muted) {
+        video.muted = true;
+        render();
+        video.play().catch(() => { overlay.hidden = false; });
+      } else {
+        overlay.hidden = false;
+      }
+    });
   }
 
   // ---- player lifecycle ------------------------------------------------------
@@ -371,13 +364,11 @@
   }
 
   function startNative() {
-    mode = 'native';
     video.src = STREAM;
     safePlay();
   }
 
   function startHlsJs() {
-    mode = 'hlsjs';
     const h = new Hls(HLS_CONFIG);
     hls = h;
     h.on(Hls.Events.MANIFEST_PARSED, () => safePlay());
@@ -457,7 +448,7 @@
     goLive(away);
   });
   video.addEventListener('volumechange', () => render());
-  video.addEventListener('error', () => { if (mode === 'native') rebuild(3000); });
+  video.addEventListener('error', () => { if (!hls) rebuild(3000); });
 
   // Watchdog: supposed to be playing but the picture hasn't moved → start over.
   // Covers native stalls and a stream that changed underneath us (restart).
@@ -609,12 +600,14 @@
   video.addEventListener('playing', checkMode);
 
   document.addEventListener('keydown', e => {
-    if (e.key === 'm' || e.key === 'M') toggleMute();
-    else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
-    else if (e.key === 's' || e.key === 'S') surf();
-    else if (e.key === 'b' || e.key === 'B') toggleBumps();
-    else if (e.key === 'ArrowUp' || e.key === '+' || e.key === '=') { e.preventDefault(); changeVolume(1); }
-    else if (e.key === 'ArrowDown' || e.key === '-') { e.preventDefault(); changeVolume(-1); }
+    switch (e.key.toLowerCase()) {
+      case 'm': toggleMute(); break;
+      case 'f': toggleFullscreen(); break;
+      case 's': surf(); break;
+      case 'b': toggleBumps(); break;
+      case 'arrowup': case '+': case '=': e.preventDefault(); changeVolume(1); break;
+      case 'arrowdown': case '-': e.preventDefault(); changeVolume(-1); break;
+    }
   });
 
   render(true);

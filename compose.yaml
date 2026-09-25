@@ -4,8 +4,6 @@
 #   docker compose up -d --build           # on air (starts with a 3-5 bump break)
 #   docker compose logs -f                 # the ON AIR log
 #   docker compose stop                    # off air; `up -d` starts a fresh break
-#   docker compose run --rm samples        # (re)make the [SAMPLE] color videos
-#   docker compose run --rm samples --clean   # delete every [SAMPLE] video
 #
 # URL: http://100.94.66.74:7000 (Tailscale) or http://192.168.1.199:7000 (LAN)
 #      VLC/IINA: the same URL + /live.m3u8
@@ -30,8 +28,6 @@ services:
       - /hls:size=256m
     environment:
       - TZ=America/New_York
-      - BUMPS_MIN=3
-      - BUMPS_MAX=5
     healthcheck:
       # /healthz is 200 only while segments are actually being published.
       test: ["CMD", "python3", "-c",
@@ -41,13 +37,3 @@ services:
       retries: 3
       start_period: 30s
 
-  # Tool, not a service: `up -d` never starts it (profile). Same image, but
-  # with the media mounted read-write so it can write the sample videos.
-  samples:
-    build: .
-    image: tv-channel
-    profiles: ["tools"]
-    volumes:
-      - ./shows:/media/shows
-      - ./bumps:/media/bumps
-    entrypoint: ["python3", "/app/make_samples.py"]
