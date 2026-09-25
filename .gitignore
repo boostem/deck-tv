@@ -1,0 +1,5 @@
+# Media (100+ GB) and runtime state stay out of git
+bumps/
+shows/
+state/
+__pycache__/

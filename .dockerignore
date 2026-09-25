@@ -1,0 +1,6 @@
+# Only app/ and web/ belong in the image. Without this, `docker build` ships
+# every episode in shows/ (100+ GB) to the daemon before building anything.
+*
+!app/
+!web/
+**/__pycache__

@@ -1,0 +1,53 @@
+# Deck TV: a 24/7 Adult Swim / Toonami-style channel. One episode, then 3-5
+# bumps, forever. It keeps airing whether or not anyone is watching.
+#
+#   docker compose up -d --build           # on air (starts with a 3-5 bump break)
+#   docker compose logs -f                 # the ON AIR log
+#   docker compose stop                    # off air; `up -d` starts a fresh break
+#   docker compose run --rm samples        # (re)make the [SAMPLE] color videos
+#   docker compose run --rm samples --clean   # delete every [SAMPLE] video
+#
+# URL: http://100.94.66.74:7000 (Tailscale) or http://192.168.1.199:7000 (LAN)
+#      VLC/IINA: the same URL + /live.m3u8
+
+services:
+  tv:
+    build: .
+    image: tv-channel
+    container_name: tv
+    restart: unless-stopped
+    ports:
+      - "7000:8000"
+    volumes:
+      # Media is read-only: the channel can never modify your library.
+      - ./shows:/media/shows:ro
+      - ./bumps:/media/bumps:ro
+      # Shuffle bags, last show and history, so no-repeat survives restarts.
+      - ./state:/state
+    # Live HLS segments live in RAM: ~20 s ahead plus a short tail behind,
+    # instead of 24/7 small writes to the SSD.
+    tmpfs:
+      - /hls:size=256m
+    environment:
+      - TZ=America/New_York
+      - BUMPS_MIN=3
+      - BUMPS_MAX=5
+    healthcheck:
+      # /healthz is 200 only while segments are actually being published.
+      test: ["CMD", "python3", "-c",
+             "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz', timeout=4).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Tool, not a service: `up -d` never starts it (profile). Same image, but
+  # with the media mounted read-write so it can write the sample videos.
+  samples:
+    build: .
+    image: tv-channel
+    profiles: ["tools"]
+    volumes:
+      - ./shows:/media/shows
+      - ./bumps:/media/bumps
+    entrypoint: ["python3", "/app/make_samples.py"]
