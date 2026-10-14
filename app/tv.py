@@ -269,7 +269,7 @@ def episode(state: State, bad: set[str], shows: dict[str, list[str]], bumps: lis
         for i in range(parts):
             if i:  # mid-episode commercial break: one bump
                 for b in pick_bumps(state, bumps, 1):
-                    yield Item("bump", os.path.join(BUMPS_DIR, b), rel=b)
+                    yield bump_item(b)
             failed = yield Item("episode", path, show=show, rel=rel, start=edges[i],
                                 end=edges[i + 1], part=i + 1, parts=parts,
                                 surf=surf if i == 0 else 0, info=info)
@@ -307,7 +307,7 @@ def programme(state: State, bad: set[str], surf: int = 0):
             continue
         if not surf:
             for rel in pick_bumps(state, bumps):
-                yield Item("bump", os.path.join(BUMPS_DIR, rel), rel=rel)
+                yield bump_item(rel)
             shows, bumps = scan(bad)  # the break took a while; pick up anything new
         yield from episode(state, bad, shows, bumps, surf)
         surf = 0

@@ -1,5 +1,19 @@
-# Media (100+ GB) and runtime state stay out of git
-bumps/
-shows/
-state/
+# Only the code is tracked. Media, runtime state and anything else dropped in
+# this folder stay local, so `git add -A` is always safe.
+/*
+!/.gitignore
+!/.dockerignore
+!/Dockerfile
+!/compose.yaml
+!/README.md
+!/app/
+!/web/
 __pycache__/
+
+# Keep the empty media folders so a fresh clone has somewhere to put files.
+!/shows/
+/shows/*
+!/shows/.gitkeep
+!/bumps/
+/bumps/*
+!/bumps/.gitkeep

@@ -1,17 +1,34 @@
 # Deck TV
 
-A 24/7 Adult Swim / Toonami-style channel running on the Steam Deck: a random
-episode, then 3–5 random bumps, then another random episode, forever. It's a
-real broadcast, one live stream everyone shares. Close the page, come back ten
-minutes later, and you're ten minutes further along.
+A 24/7 Adult Swim / Toonami-style channel: a random episode, then 3–5 random
+bumps, then another random episode, forever. It's a real broadcast, one live
+stream everyone shares. Close the page, come back ten minutes later, and
+you're ten minutes further along.
+
+## Quick start
+
+Needs Docker with the compose plugin. Nothing else: ffmpeg and Python are in
+the image.
+
+```sh
+git clone <this repo> tv && cd tv
+# put episodes in shows/<Show Name>/ and bumps in bumps/ (see below)
+docker compose up -d --build
+```
+
+Then open `http://<this machine>:7000`. It restarts by itself after a reboot
+unless you stop it. To use another port or timezone, set `PORT` or `TZ` in a
+`.env` file next to `compose.yaml` (defaults: `7000`, `America/New_York`).
+
+Only the code is tracked in git. Media, `state/` and anything else you drop
+in the folder are ignored, so `git pull` to update is always safe.
 
 ## Watch
 
 | From | URL |
 |---|---|
-| iPhone / MacBook (Tailscale on) | http://100.94.66.74:7000 |
-| Home Wi-Fi | http://192.168.1.199:7000 |
-| VLC / IINA / any IPTV app | http://100.94.66.74:7000/live.m3u8 |
+| Any browser | `http://<this machine>:7000` |
+| VLC / IINA / any IPTV app | `http://<this machine>:7000/live.m3u8` |
 
 - **The set:** the page is an old projection TV drawn in CSS.
   - It starts muted, because browsers only autoplay muted. The green **MUTE**
@@ -42,7 +59,6 @@ minutes later, and you're ten minutes further along.
 ## Run it
 
 ```sh
-cd ~/TV
 docker compose up -d           # on air (the first build takes a few minutes)
 docker compose logs -f         # the ON AIR log: every bump and episode as it airs
 docker compose stop            # off air
@@ -50,11 +66,9 @@ docker compose up -d           # back on air, opening with a fresh 3-5 bump brea
 docker compose up -d --build   # after editing anything in app/ or web/
 ```
 
-It comes back by itself after a reboot, unless you stopped it.
-
 ## Adding shows and bumps
 
-Drag files into `~/TV/shows` and `~/TV/bumps`. No restart needed.
+Drop files into `shows/` and `bumps/`. No restart needed.
 
 ```
 shows/
@@ -89,7 +103,7 @@ bumps/
 - **New files:** a new file waits until it has sat unchanged for 30 s, so a
   half-copied episode never airs.
 - **Duplicate rips** like `... - Copy.mkv` air as separate episodes, so delete them.
-- **Naming for V2:** V2's "recently played" will read show, season, episode and
+- **Naming:** the planned "recently played" will read show, season, episode and
   title from the filename. Name episodes like `Show - S01E01 - Title.mkv`
   (Jellyfin style; `Show.S01E01.Title.avi` also works).
 
@@ -118,15 +132,11 @@ bumps/
 - **No sound:** tap the picture once.
 - **An episode never airs:** check the log for `SKIP` and try playing the
   file in VLC.
-- **CPU:** one ffmpeg converts SD video to 480p at a little over real time.
-  `docker stats tv` shows the cost.
+- **CPU:** one ffmpeg re-encodes everything to 480p live, so the host has to
+  transcode faster than real time. `docker stats tv` shows the cost.
 
-## V2 roadmap
+## Roadmap
 
-- ~~**Projection-TV look**~~ **(done):** drawn in CSS instead of a PNG, so it
-  stays sharp at any size.
-  - It has MUTE on the front panel and SURF on the base.
-  - Green readouts appear on screen, like an old TV.
 - **Coming up next:**
   - the planner keeps a lookahead queue of the next few items;
   - a small `/api/status` endpoint exposes it.
@@ -136,8 +146,8 @@ bumps/
   - parsed from filenames with the `SxxEyy` pattern;
   - synced to what the viewer actually sees using the playlist's
     `PROGRAM-DATE-TIME` stamps, since viewers run about 6 s behind live.
+- **Themed bump pools:** tag shows as anime or adult, then air Toonami bumps
+  around anime and Adult Swim bumps around everything else.
 - **Later ideas:**
-  - themed bump pools, e.g. Toonami bumps around anime and Adult Swim bumps
-    around comedy;
   - HTTPS via `tailscale serve`;
   - skipping duplicate rips automatically.

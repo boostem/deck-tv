@@ -5,8 +5,8 @@
 #   docker compose logs -f                 # the ON AIR log
 #   docker compose stop                    # off air; `up -d` starts a fresh break
 #
-# URL: http://100.94.66.74:7000 (Tailscale) or http://192.168.1.199:7000 (LAN)
-#      VLC/IINA: the same URL + /live.m3u8
+# URL: http://<this machine>:7000   VLC/IINA: the same URL + /live.m3u8
+# PORT and TZ can be overridden in the environment or a .env file.
 
 services:
   tv:
@@ -15,7 +15,7 @@ services:
     container_name: tv
     restart: unless-stopped
     ports:
-      - "7000:8000"
+      - "${PORT:-7000}:8000"
     volumes:
       # Media is read-only: the channel can never modify your library.
       - ./shows:/media/shows:ro
@@ -27,7 +27,7 @@ services:
     tmpfs:
       - /hls:size=256m
     environment:
-      - TZ=America/New_York
+      - TZ=${TZ:-America/New_York}
     healthcheck:
       # /healthz is 200 only while segments are actually being published.
       test: ["CMD", "python3", "-c",
